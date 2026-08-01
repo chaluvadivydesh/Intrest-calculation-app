@@ -10,7 +10,32 @@ document.addEventListener('DOMContentLoaded', () => {
     registerSW();
 });
 
-// ===== HELPERS: TODAY =====
+// ===== MOBILE DETECTION =====
+function isMobile() {
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+           (navigator.maxTouchPoints > 1 && window.innerWidth <= 900);
+}
+
+// ===== PARSE DD/MM/YYYY → YYYY-MM-DD (mobile manual entry) =====
+function parseDDMMYYYY(str) {
+    if (!str) return '';
+    // Accept DD/MM/YYYY or DD-MM-YYYY
+    const parts = str.split(/[\/\-]/).map(s => s.trim());
+    if (parts.length !== 3) return '';
+    const [dd, mm, yyyy] = parts;
+    if (!dd || !mm || !yyyy || yyyy.length !== 4) return '';
+    if (isNaN(dd) || isNaN(mm) || isNaN(yyyy)) return '';
+    const d = parseInt(dd), m = parseInt(mm), y = parseInt(yyyy);
+    if (m < 1 || m > 12 || d < 1 || d > 31 || y < 2000 || y > 2099) return '';
+    return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+}
+
+// ===== FORMAT YYYY-MM-DD → DD/MM/YYYY for mobile display =====
+function toDisplayDate(isoStr) {
+    if (!isoStr) return '';
+    const [y, m, d] = isoStr.split('-');
+    return `${d}/${m}/${y}`;
+}
 function getTodayString() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -129,23 +154,55 @@ function updateDuration(id) {
 // ===== VALIDATION =====
 function validateSection(id) {
     let valid = true;
-    const g = v(id, 'givenDate');
-    const c = v(id, 'calcDate');
-    const p = v(id, 'principal');
     const s = sections[id];
 
-    // clear old errors in this section
     const wrap = document.getElementById(`calc-section-${id}`);
     wrap.querySelectorAll('.error-msg').forEach(e => e.remove());
     wrap.querySelectorAll('.input-field').forEach(e => e.classList.remove('error'));
 
-    if (!g) { showSectionError(id, 'givenDate', 'Please select Money Given Date'); valid = false; }
-    if (!c) { showSectionError(id, 'calcDate',  'Please select Calculation Date');  valid = false; }
+    // On mobile, sync part fields → ISO before reading
+    if (isMobile()) {
+        ['givenDate', 'calcDate'].forEach(fn => {
+            const ddEl   = document.getElementById(`${fn}DD-${id}`);
+            const mmEl   = document.getElementById(`${fn}MM-${id}`);
+            const yyyyEl = document.getElementById(`${fn}YYYY-${id}`);
+            const isoEl  = document.getElementById(`${fn}-${id}`);
+            if (!ddEl || !isoEl) return;
+            const dd   = String(ddEl.value   || '').padStart(2, '0');
+            const mm   = String(mmEl.value   || '').padStart(2, '0');
+            const yyyy = yyyyEl.value || '';
+            isoEl.value = (ddEl.value && mmEl.value && yyyy.length === 4)
+                ? `${yyyy}-${mm}-${dd}` : '';
+        });
+    }
+
+    const g = v(id, 'givenDate');
+    const c = v(id, 'calcDate');
+    const p = v(id, 'principal');
+
+    if (!g) {
+        if (isMobile()) {
+            document.getElementById(`givenDateDD-${id}`)?.classList.add('error');
+            showToast('⚠️ Enter complete Money Given Date (DD / MM / YYYY)');
+        } else {
+            showSectionError(id, 'givenDate', 'Please select Money Given Date');
+        }
+        valid = false;
+    }
+    if (!c) {
+        if (isMobile()) {
+            document.getElementById(`calcDateDD-${id}`)?.classList.add('error');
+            showToast('⚠️ Enter complete Calculation Date (DD / MM / YYYY)');
+        } else {
+            showSectionError(id, 'calcDate', 'Please select Calculation Date');
+        }
+        valid = false;
+    }
     if (g && c && totalDaysBetween(g, c) <= 0) {
-        showSectionError(id, 'calcDate', 'Calculation Date must be after Money Given Date'); valid = false;
+        showToast('⚠️ Calculation Date must be after Money Given Date in Calc ' + id); valid = false;
     }
     if (!p || parseFloat(p) <= 0) { showSectionError(id, 'principal', 'Enter a valid principal amount'); valid = false; }
-    if (!s.rate)     { showToast('⚠️ Select Interest Rate in Calculation ' + id);     valid = false; }
+    if (!s.rate)     { showToast('⚠️ Select Interest Rate in Calculation '      + id); valid = false; }
     if (!s.freqDays) { showToast('⚠️ Select Compound Frequency in Calculation ' + id); valid = false; }
     return valid;
 }
@@ -162,9 +219,36 @@ function showSectionError(id, fieldId, msg) {
 
 // ===== RESET A SECTION =====
 function resetSection(id) {
-    document.getElementById(`givenDate-${id}`).value = '';
-    document.getElementById(`calcDate-${id}`).value  = getTodayString();
-    document.getElementById(`principal-${id}`).value = '';
+    const todayISO = getTodayString();
+
+    if (isMobile()) {
+        // Clear mobile DD/MM/YYYY part fields
+        ['givenDate', 'calcDate'].forEach(fn => {
+            const ddEl   = document.getElementById(`${fn}DD-${id}`);
+            const mmEl   = document.getElementById(`${fn}MM-${id}`);
+            const yyyyEl = document.getElementById(`${fn}YYYY-${id}`);
+            const isoEl  = document.getElementById(`${fn}-${id}`);
+            if (ddEl)   ddEl.value   = '';
+            if (mmEl)   mmEl.value   = '';
+            if (yyyyEl) yyyyEl.value = '';
+            if (isoEl)  isoEl.value  = '';
+        });
+        // Restore today in calcDate parts
+        const [y, m, d] = todayISO.split('-');
+        const cDD   = document.getElementById(`calcDateDD-${id}`);
+        const cMM   = document.getElementById(`calcDateMM-${id}`);
+        const cYYYY = document.getElementById(`calcDateYYYY-${id}`);
+        const cIso  = document.getElementById(`calcDate-${id}`);
+        if (cDD)   cDD.value   = d;
+        if (cMM)   cMM.value   = m;
+        if (cYYYY) cYYYY.value = y;
+        if (cIso)  cIso.value  = todayISO;
+    } else {
+        document.getElementById(`givenDate-${id}`).value = '';
+        document.getElementById(`calcDate-${id}`).value  = todayISO;
+    }
+
+    document.getElementById(`principal-${id}`).value  = '';
     document.getElementById(`rateSelect-${id}`).value  = '2';
     document.getElementById(`freqSelect-${id}`).value  = '360';
     sections[id].rate     = 2;
@@ -180,7 +264,41 @@ function resetSection(id) {
 }
 
 // ===== SECTION HTML BUILDER =====
+// ===== SECTION HTML BUILDER =====
 function buildSectionHTML(id) {
+    const todayISO = getTodayString();
+    const mobile   = isMobile();
+
+    function dateFieldHTML(fieldName, defaultISO) {
+        const fid = `${fieldName}-${id}`; // the value read by all calc logic (YYYY-MM-DD)
+
+        if (!mobile) {
+            // ── DESKTOP: native type="date" ──
+            // Browser handles auto-padding (2→02) and DD/MM/YYYY display natively
+            return `<input type="date" id="${fid}" class="input-field"
+                      ${defaultISO ? `value="${defaultISO}"` : ''}>`;
+        }
+
+        // ── MOBILE: three separate number boxes DD | MM | YYYY ──
+        // Auto-pad on blur, auto-focus next field on 2-digit entry
+        const [defY='', defM='', defD=''] = defaultISO ? defaultISO.split('-') : [];
+        const ddId   = `${fieldName}DD-${id}`;
+        const mmId   = `${fieldName}MM-${id}`;
+        const yyyyId = `${fieldName}YYYY-${id}`;
+        return `
+          <div class="mob-date-wrap">
+            <input type="number" id="${ddId}"   class="mob-date-part" placeholder="DD"
+              min="1" max="31" value="${defD}" inputmode="numeric">
+            <span class="mob-date-sep">/</span>
+            <input type="number" id="${mmId}"   class="mob-date-part" placeholder="MM"
+              min="1" max="12" value="${defM}" inputmode="numeric">
+            <span class="mob-date-sep">/</span>
+            <input type="number" id="${yyyyId}" class="mob-date-part mob-date-year" placeholder="YYYY"
+              min="2000" max="2099" value="${defY}" inputmode="numeric">
+            <input type="hidden" id="${fid}" value="${defaultISO || ''}">
+          </div>`;
+    }
+
     return `
 <div class="calc-section-wrapper" id="calc-section-${id}">
   <div class="calc-section-label">Calculation ${id}</div>
@@ -191,11 +309,11 @@ function buildSectionHTML(id) {
       <div class="card-header"><span class="card-icon">📅</span><h2>Date Period</h2></div>
       <div class="field-group">
         <label>Money Given Date</label>
-        <input type="date" id="givenDate-${id}" class="input-field">
+        ${dateFieldHTML('givenDate', '')}
       </div>
       <div class="field-group">
         <label>Calculation Date <span class="badge">Auto Today</span></label>
-        <input type="date" id="calcDate-${id}" class="input-field" value="${getTodayString()}">
+        ${dateFieldHTML('calcDate', todayISO)}
       </div>
       <div class="duration-box" id="durationBox-${id}" style="display:none">
         <div class="duration-main" id="durationMain-${id}"></div>
@@ -269,8 +387,53 @@ function buildSectionHTML(id) {
 function bindSectionEvents(id) {
     sections[id] = { rate: 2, freqDays: 360, result: null };
 
-    document.getElementById(`givenDate-${id}`).addEventListener('change', () => updateDuration(id));
-    document.getElementById(`calcDate-${id}`).addEventListener('change',  () => updateDuration(id));
+    if (isMobile()) {
+        // ── MOBILE: bind each DD/MM/YYYY part separately ──
+        ['givenDate', 'calcDate'].forEach(fieldName => {
+            const ddEl   = document.getElementById(`${fieldName}DD-${id}`);
+            const mmEl   = document.getElementById(`${fieldName}MM-${id}`);
+            const yyyyEl = document.getElementById(`${fieldName}YYYY-${id}`);
+            const isoEl  = document.getElementById(`${fieldName}-${id}`);
+            if (!ddEl) return;
+
+            function syncISO() {
+                const dd   = String(ddEl.value   || '').padStart(2, '0');
+                const mm   = String(mmEl.value   || '').padStart(2, '0');
+                const yyyy = yyyyEl.value || '';
+                if (ddEl.value && mmEl.value && yyyy.length === 4) {
+                    isoEl.value = `${yyyy}-${mm}-${dd}`;
+                    updateDuration(id);
+                } else {
+                    isoEl.value = '';
+                }
+            }
+
+            // Auto-pad on blur: 5 → 05
+            ddEl.addEventListener('blur', () => {
+                if (ddEl.value) ddEl.value = String(parseInt(ddEl.value)).padStart(2, '0');
+                syncISO();
+            });
+            mmEl.addEventListener('blur', () => {
+                if (mmEl.value) mmEl.value = String(parseInt(mmEl.value)).padStart(2, '0');
+                syncISO();
+            });
+            yyyyEl.addEventListener('blur', syncISO);
+
+            // Auto-advance focus: after 2 digits in DD → jump to MM, MM → YYYY
+            ddEl.addEventListener('input', () => {
+                if (ddEl.value.length >= 2) mmEl.focus();
+            });
+            mmEl.addEventListener('input', () => {
+                if (mmEl.value.length >= 2) yyyyEl.focus();
+            });
+            yyyyEl.addEventListener('input', syncISO);
+        });
+
+    } else {
+        // ── DESKTOP: native type="date" with built-in auto-padding ──
+        document.getElementById(`givenDate-${id}`).addEventListener('change', () => updateDuration(id));
+        document.getElementById(`calcDate-${id}`).addEventListener('change',  () => updateDuration(id));
+    }
 
     document.getElementById(`rateSelect-${id}`).addEventListener('change', (e) => {
         sections[id].rate = parseFloat(e.target.value);
@@ -278,9 +441,35 @@ function bindSectionEvents(id) {
     document.getElementById(`freqSelect-${id}`).addEventListener('change', (e) => {
         sections[id].freqDays = parseInt(e.target.value);
     });
-
     document.getElementById(`calcBtn-${id}`).addEventListener('click',  () => runCalc(id));
     document.getElementById(`resetBtn-${id}`).addEventListener('click', () => resetSection(id));
+}
+
+// ===== MOBILE: sync text input → hidden ISO value → updateDuration =====
+function syncMobileDateFromText(id, fieldName) {
+    const txtEl = document.getElementById(`${fieldName}Text-${id}`);
+    const isoEl = document.getElementById(`${fieldName}-${id}`);
+    if (!txtEl || !isoEl) return;
+    const iso = parseDDMMYYYY(txtEl.value);
+    isoEl.value = iso;
+    if (iso) updateDuration(id);
+}
+
+// ===== MOBILE: calendar icon opens hidden date picker =====
+function openCalPicker(id, fieldName) {
+    const hidEl = document.getElementById(`${fieldName}Hidden-${id}`);
+    if (!hidEl) return;
+    hidEl.showPicker ? hidEl.showPicker() : hidEl.click();
+    hidEl.onchange = () => {
+        const iso = hidEl.value; // YYYY-MM-DD
+        if (!iso) return;
+        // Write DD/MM/YYYY into text input
+        const txtEl = document.getElementById(`${fieldName}Text-${id}`);
+        const isoEl = document.getElementById(`${fieldName}-${id}`);
+        if (txtEl) txtEl.value = toDisplayDate(iso);
+        if (isoEl) isoEl.value = iso;
+        updateDuration(id);
+    };
 }
 
 // ===== MANAGE SECTION COUNT =====
@@ -343,8 +532,18 @@ function bindGlobalEvents() {
         document.getElementById('historyCount').textContent = '0';
     });
 
-    // Global PDF — all completed results
+    // PDF button — now at bottom of page
     document.getElementById('pdfBtn').addEventListener('click', downloadAllPDF);
+
+    // FIX: pageshow fires when browser restores page from bfcache (back-forward cache)
+    // This is the PRIMARY cause of the freeze — bfcache restores a stale JS state
+    // Setting cache-control to no-store prevents bfcache from caching this page
+    window.addEventListener('pageshow', (e) => {
+        if (e.persisted) {
+            // Page was restored from bfcache — force a clean reload
+            window.location.reload();
+        }
+    });
 }
 
 // ===== HISTORY =====
@@ -373,9 +572,8 @@ function renderHistory() {
     });
 }
 
-// ===== COMBINED PDF — 4 bills per page =====
+// ===== COMBINED PDF — 2 bills per page =====
 function downloadAllPDF() {
-    // Collect all completed results
     const results = [];
     Object.keys(sections).sort((a,b) => a-b).forEach(id => {
         if (sections[id].result) results.push({ id: parseInt(id), ...sections[id].result });
@@ -387,6 +585,7 @@ function downloadAllPDF() {
         const [y,m,day] = d.split('-');
         return `${day}/${m}/${y}`;
     }
+
     function buildBill(r, idx) {
         let durParts = [];
         if (r.days   > 0) durParts.push(`${r.days} Day${r.days > 1 ? 's' : ''}`);
@@ -398,11 +597,14 @@ function downloadAllPDF() {
         r.breakdown.forEach(item => { bdRows += `<div class="bd-line">${formatINR(item.value)}</div>`; });
         bdRows += `<div class="bd-total-line">Total: ${formatINR(r.finalAmount)}</div>`;
 
-        // page-break every 4 bills
-        const pageBreak = (idx > 0 && idx % 4 === 0) ? 'page-break-before' : '';
+        // Page break before every odd-indexed bill (3rd, 5th, 7th…) = every 2 bills per page
+        // idx 0,1 → page 1 | idx 2,3 → page 2 | idx 4,5 → page 3 …
+        const breakClass = (idx > 0 && idx % 2 === 0) ? 'page-break-before' : '';
+        // Divider only between the two bills on the same page (idx odd, not page boundary)
+        const divider = (idx > 0 && idx % 2 !== 0) ? '<div class="bill-divider"></div>' : '';
 
-        return `
-<div class="bill ${pageBreak}">
+        return `${divider}
+<div class="bill ${breakClass}">
   <div class="bill-num">Calculation ${r.id}</div>
   <div class="report-body">
     <div class="left-col">
@@ -444,16 +646,17 @@ function downloadAllPDF() {
 </div>`;
     }
 
-    const allBills = results.map((r, i) => buildBill(r, i)).join('<div class="bill-divider"></div>');
+    const allBills = results.map((r, i) => buildBill(r, i)).join('');
 
-    // Grand Summary block for PDF (only when 2+ completed calculations)
+    // Grand Summary — only when 2+ results
     let grandSummaryHTML = '';
     if (results.length >= 2) {
         const grandInterest = results.reduce((s, r) => s + r.totalInterest, 0);
         const grandFinal    = results.reduce((s, r) => s + r.finalAmount,   0);
+        // Grand summary starts on a new page
+        const gsBreak = results.length % 2 === 0 ? 'page-break-before' : '';
         grandSummaryHTML = `
-<div class="bill-divider"></div>
-<div class="grand-block">
+<div class="grand-block ${gsBreak}">
   <div class="grand-heading">Grand Total Summary</div>
   <div class="grand-pdf-row">
     <span class="grand-pdf-label">Grand Total Interest</span>
@@ -466,15 +669,14 @@ function downloadAllPDF() {
 </div>`;
     }
 
-    const win = window.open('', '_blank');
-    win.document.write(`<!DOCTYPE html>
+    const html = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Interest Report</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:Arial,sans-serif; padding:24px; color:#111; font-size:13px; }
   h1 { font-size:18px; font-weight:800; color:#1a1a2e; margin-bottom:2px; }
   .subtitle { color:#666; font-size:11px; margin-bottom:20px; }
-  .bill { margin-bottom:0; padding:20px 0; }
+  .bill { padding:20px 0; page-break-inside:avoid; }
   .bill-num { font-size:11px; font-weight:700; color:#6c63ff; text-transform:uppercase;
               letter-spacing:1px; margin-bottom:10px; }
   .bill-divider { border-top:2px dashed #ddd; margin:16px 0; }
@@ -496,8 +698,8 @@ function downloadAllPDF() {
   .bd-total-line { font-size:15px; font-weight:800; color:#1a1a2e;
                    padding:6px 0; margin-top:4px; border-top:2px solid #1a1a2e; }
   .footer { margin-top:20px; font-size:9px; color:#aaa; text-align:center; }
-  /* Grand Summary in PDF */
-  .grand-block { margin-top:4px; padding:16px; border:3px solid #111; }
+  .grand-block { padding:16px; border:3px solid #111; page-break-inside:avoid; margin-top:16px; }
+  .grand-block.page-break-before { page-break-before:always; padding-top:24px; }
   .grand-heading { font-size:14px; font-weight:800; text-transform:uppercase;
                    letter-spacing:1px; color:#111; margin-bottom:12px;
                    padding-bottom:8px; border-bottom:2px solid #ccc; }
@@ -509,21 +711,54 @@ function downloadAllPDF() {
   .grand-pdf-final { font-size:20px; }
   @media print { body { padding:16px; } }
 </style></head><body>
-<h1>₹ Interest Calculation Report</h1>
+<h1>&#8377; Interest Calculation Report</h1>
 <p class="subtitle">Generated on ${new Date().toLocaleString()} &nbsp;|&nbsp; Interest Pro &nbsp;|&nbsp; ${results.length} Calculation${results.length > 1 ? 's' : ''}</p>
 ${allBills}
 ${grandSummaryHTML}
-<div class="footer">Interest Pro — Custom Lending Calculator</div>
-<script>window.onload = () => window.print();<\/script>
-</body></html>`);
-    win.document.close();
+<div class="footer">Interest Pro &#8212; Custom Lending Calculator</div>
+</body></html>`;
+
+    // ---- FIX: Use Blob URL instead of document.write to prevent freezing ----
+    const blob = new Blob([html], { type: 'text/html' });
+    const url  = URL.createObjectURL(blob);
+    const win  = window.open(url, '_blank');
+
+    // Trigger print inside the new tab once it loads, then revoke the blob URL
+    if (win) {
+        win.addEventListener('load', () => {
+            win.print();
+            // Revoke after a short delay to allow print dialog to open
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+        });
+    } else {
+        // Popup blocked — offer direct download fallback
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'interest-report.html';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
 }
 
 // ===== GRAND SUMMARY =====
 function updateGrandSummary() {
-    const completed = Object.values(sections).filter(s => s.result);
-    const box = document.getElementById('grandSummary');
+    const completed  = Object.values(sections).filter(s => s.result);
+    const totalCount = Object.keys(sections).length;
+    const box        = document.getElementById('grandSummary');
+    const pdfWrap    = document.getElementById('pdfBtnWrap');
 
+    // Only show grand summary when ALL sections are completed AND there are 2+
+    // For single calculation: just show PDF button when it's done
+    if (completed.length < totalCount) {
+        box.style.display = 'none';
+        if (pdfWrap) pdfWrap.style.display = 'none';
+        return;
+    }
+
+    // All done — show PDF button regardless
+    if (pdfWrap) pdfWrap.style.display = 'flex';
+
+    // Grand summary only for 2+
     if (completed.length < 2) {
         box.style.display = 'none';
         return;
@@ -535,13 +770,9 @@ function updateGrandSummary() {
     document.getElementById('grandInterest').textContent = formatINR(totalInterest);
     document.getElementById('grandFinal').textContent    = formatINR(totalFinal);
 
-    const wasHidden = box.style.display === 'none';
+    // Show without auto-scrolling — user stays where they are
     box.style.display = 'block';
-
-    // Scroll into view when it first becomes visible
-    if (wasHidden) {
-        setTimeout(() => box.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
-    }
+    if (pdfWrap) pdfWrap.style.display = 'flex';
 }
 
 // ===== DOM HELPERS =====
