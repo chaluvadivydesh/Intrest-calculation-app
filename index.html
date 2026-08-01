@@ -4,10 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#6c63ff">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <meta name="description" content="Professional Interest Calculator - Custom Lending System">
 <link rel="manifest" href="manifest.json">
 <title>Interest Calculator Pro</title>
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=12">
+<script src="script.js?v=12" defer></script>
 </head>
 <body class="light">
 <div class="app-wrapper">
@@ -29,7 +32,7 @@
 
   <main class="main-content">
 
-    <!-- Count Selector Bar -->
+    <!-- Count Selector Bar — no PDF button here anymore -->
     <div class="count-bar card">
       <div class="count-bar-inner">
         <label for="calcCountSelect">Number of Calculations</label>
@@ -46,13 +49,12 @@
           <option value="10">10</option>
         </select>
       </div>
-      <button class="btn-pdf" id="pdfBtn">📄 Download All as PDF</button>
     </div>
 
     <!-- Dynamic calculation sections injected here by JS -->
     <div id="calcSectionsContainer"></div>
 
-    <!-- Grand Summary — shown only when 2+ calculations are completed -->
+    <!-- Grand Summary — shown only when ALL calculations are completed (2+) -->
     <div id="grandSummary" style="display:none" class="card grand-summary-card">
       <div class="grand-title">Grand Total Summary</div>
       <div class="grand-row">
@@ -63,6 +65,11 @@
         <span class="grand-label">Grand Final Amount</span>
         <span class="grand-value grand-final" id="grandFinal">₹0</span>
       </div>
+    </div>
+
+    <!-- PDF Button — shown at bottom after all calculations are done -->
+    <div id="pdfBtnWrap" style="display:none" class="pdf-bottom-wrap">
+      <button class="btn-pdf btn-pdf-large" id="pdfBtn">📄 Download All as PDF</button>
     </div>
 
   </main>
@@ -82,6 +89,6 @@
   </div>
 
 </div>
-<script src="script.js?v=8"></script>
+
 </body>
 </html>
